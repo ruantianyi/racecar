@@ -519,6 +519,7 @@ pre#terminal {
     display: flex;
     gap: 10px;
     z-index: 5;
+    pointer-events: none;
 }
 
 #unity-canvas {

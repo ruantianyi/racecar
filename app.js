@@ -964,7 +964,8 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
     };
 
     const heldKeys = new Set();
-    let prevDown = 0;
+    let pendingPressed = 0;
+    let pendingReleased = 0;
 
     function buildControllerState() {
         window.racecarState = window.racecarState || {};
@@ -979,9 +980,12 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
         const uc = (window.racecarState && window.racecarState._unityController);
         if (uc) downMask |= uc.down;
 
-        const pressedMask = downMask & ~prevDown;   // newly pressed this tick
-        const releasedMask = prevDown & ~downMask;  // just released this tick
-        prevDown = downMask;
+        const pressedMask = pendingPressed | (uc ? uc.pressed : 0);
+        const releasedMask = pendingReleased | (uc ? uc.released : 0);
+
+        // Reset pending bitmasks so they only persist for one frame update
+        pendingPressed = 0;
+        pendingReleased = 0;
 
         // --- Triggers: Q = Left Trigger, E = Right Trigger ---
         const tl = heldKeys.has('KeyQ') ? 1.0 : (uc ? uc.tl : 0.0);
@@ -1027,17 +1031,33 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
         if (isTypingTarget(e)) return;
         if (heldKeys.has(e.code)) return; // already held
         heldKeys.add(e.code);
+        const bit = KEY_BUTTON_MAP[e.code];
+        if (bit !== undefined) {
+            pendingPressed |= (1 << bit);
+        }
         buildControllerState();
     }, false);
 
     document.addEventListener('keyup', (e) => {
+        if (isTypingTarget(e)) return;
         heldKeys.delete(e.code);
+        const bit = KEY_BUTTON_MAP[e.code];
+        if (bit !== undefined) {
+            pendingReleased |= (1 << bit);
+        }
         buildControllerState();
     }, false);
 
+    document.addEventListener('click', (e) => {
+        if (e.target && (e.target.id === 'unity-canvas' || (e.target.closest && e.target.closest('#unity-container')))) {
+            const canvas = document.getElementById('unity-canvas');
+            if (canvas && typeof canvas.focus === 'function') {
+                canvas.focus();
+            }
+        }
+    });
+
     // Keep pressed/released up to date each animation frame
-    // (Unity update loop will call buildControllerState per tick anyway)
-    // Reset pressed/released each frame so they only fire for one update cycle
     window._kbControllerTick = function () {
         buildControllerState();
     };
@@ -1078,17 +1098,18 @@ window.unitySetMaxSpeed = function (speed) {
 
 window.unityRegisterRacecar = function (racecar) {
     activeRacecar = racecar;
-    // Cache persistent copies of the Python callback functions.
-    // racecar.getattr() returns a new PyProxy each time — we grab them once
-    // and hold on to them so they aren't garbage-collected by Pyodide.
+    // Cache the Python callback functions via direct property access on the PyProxy.
+    // In Pyodide, PyProxy exposes Python attributes as JS properties — there is no
+    // .getattr() method on the JS side. Each property access returns a new PyProxy
+    // for the underlying Python callable, so we grab them once and hold on.
     try {
-        window._rc_startFunc = racecar.getattr("_start_func");
+        window._rc_startFunc = racecar._start_func || null;
     } catch (e) { window._rc_startFunc = null; }
     try {
-        window._rc_updateFunc = racecar.getattr("_update_func");
+        window._rc_updateFunc = racecar._update_func || null;
     } catch (e) { window._rc_updateFunc = null; }
     try {
-        window._rc_updateSlowFunc = racecar.getattr("_update_slow_func");
+        window._rc_updateSlowFunc = racecar._update_slow_func || null;
     } catch (e) { window._rc_updateSlowFunc = null; }
 
     window.isPythonRunning = true;
