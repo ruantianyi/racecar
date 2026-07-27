@@ -1,0 +1,66 @@
+# ==========================================
+# MIT Racecar Neo Workspace - .gitignore
+# 只保留源代码，忽略编译产物、临时文件与系统杂文件
+# ==========================================
+
+# --- Unity WebGL 编译产物 (Build Output) ---
+# 注意：Unity 编译出的 WebGL 部署文件（体积较重，无需纳入源码版本控制）
+ide/frontend/Build/
+Build/
+Builds/
+
+# --- Unity 项目临时与工程生成文件 (Unity Generated Files) ---
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Ll]ogs/
+[Uu]serSettings/
+[Mm]emoryCaptures/
+[Aa]ssetPacks/
+sysinfo.txt
+*.apk
+*.unitypackage
+
+# --- IDE 与编辑器项目文件 (Visual Studio / VSCode / JetBrains) ---
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.sln
+*.csproj
+*.unityproj
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.idb
+
+# --- Python 缓存与虚拟环境 (Python Cache & Virtual Envs) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- 临时草稿与运行日志 (Scratch & Logs) ---
+ide/frontend/scratch/
+*.log
+*.tmp
+*.csv
+
+# --- 操作系统临时文件 (OS System Files) ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
