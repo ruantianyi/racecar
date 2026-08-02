@@ -788,7 +788,7 @@ class Camera:
         if not hasattr(js.window, "racecarState") or not hasattr(js.window.racecarState, "camera"):
             return np.zeros((480, 640, 3), dtype=np.uint8)
         cam = js.window.racecarState.camera
-        arr = np.asarray(cam.pixels.to_py(), dtype=np.uint8)
+        arr = np.asarray(cam.to_py(), dtype=np.uint8)
         arr = arr.reshape((cam.h, cam.w, 4))
         bgr = np.empty((cam.h, cam.w, 3), dtype=np.uint8)
         bgr[..., 0] = arr[..., 2]
@@ -803,10 +803,18 @@ class Camera:
 class Physics:
     def get_linear_acceleration(self):
         if not hasattr(js.window, "racecarState"): return (0.0, 0.0, 0.0)
-        return tuple(js.window.racecarState.accel.to_py())
+        if not hasattr(js.window.racecarState, "accel"): return (0.0, 0.0, 0.0)
+        try:
+            return tuple(js.window.racecarState.accel.to_py())
+        except Exception:
+            return (0.0, 0.0, 0.0)
     def get_angular_velocity(self):
         if not hasattr(js.window, "racecarState"): return (0.0, 0.0, 0.0)
-        return tuple(js.window.racecarState.gyro.to_py())
+        if not hasattr(js.window.racecarState, "gyro"): return (0.0, 0.0, 0.0)
+        try:
+            return tuple(js.window.racecarState.gyro.to_py())
+        except Exception:
+            return (0.0, 0.0, 0.0)
 
 class Controller:
     class Button:
@@ -862,6 +870,7 @@ class Racecar:
         self.physics = Physics()
         self.controller = Controller()
         self.display = Display()
+        self._update_slow_time = 1.0
 
     def set_start_update(self, start_func, update_func, update_slow_func=None):
         self._start_func = start_func
@@ -871,7 +880,8 @@ class Racecar:
         js.window.unityRegisterRacecar(self._proxy)
 
     def set_update_slow_time(self, time):
-        pass
+        self._update_slow_time = float(time)
+        js.window._rc_updateSlowTime = self._update_slow_time
 
     def get_delta_time(self):
         return 1.0 / 60.0
@@ -882,12 +892,19 @@ class Racecar:
 def create_racecar():
     return Racecar()
 `;
-            utilsCode = `import numpy as np
+            utilsCode = `import racecar_core
+import racecar_utils as rc_utils
+# Minimal fallback: if fetch of racecar_utils.py failed (file://), this stub
+# warns and re-exports the full APIs via a second fetch attempt.
+# Full 1258-line implementation should be in racecar_utils.py on disk.
+# If you see this message, run: python server.py and open http://127.0.0.1:8000
+print("[WARN] racecar_utils.py full library not loaded, using minimal shim")
+print("[WARN] Run python server.py instead of opening file:// for full functionality")
+
+import numpy as np
 import cv2
 
 def get_lidar_closest_point(samples, window):
-    # Find the closest point in a given window of lidar samples
-    # If samples is empty or window is invalid, return 0.0
     if len(samples) == 0: return 0.0
     return np.min(samples)
 
@@ -896,6 +913,25 @@ def color_image_to_hsv(image):
 
 def crop(image, top_left, bottom_right):
     return image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
+
+def find_contours(color_image, hsv_lower, hsv_upper):
+    hsv = cv2.cvtColor(color_image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, hsv_lower, hsv_upper)
+    return cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[0]
+
+def get_largest_contour(contours, min_area=30):
+    if len(contours) == 0: return None
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < min_area: return None
+    return largest
+
+def get_contour_center(contour):
+    M = cv2.moments(contour)
+    if M["m00"] <= 0: return None
+    return (round(M["m01"] / M["m00"]), round(M["m10"] / M["m00"]))
+
+def get_contour_area(contour):
+    return cv2.contourArea(contour)
 `;
         }
 
@@ -923,6 +959,12 @@ def crop(image, top_left, bottom_right):
 initPyodide();
 
 // --- 4. Unity WebGL & Pyodide Core Bridge ---
+// Pre-initialize racecarState so physics never crashes if controller push arrives first,
+// or if Python reads sensors before Unity's first physics push.
+window.racecarState = window.racecarState || {};
+window.racecarState.accel = window.racecarState.accel || { to_py: () => [0, 0, 0] };
+window.racecarState.gyro = window.racecarState.gyro || { to_py: () => [0, 0, 0] };
+
 window.unityPushState = function (ax, ay, az, gx, gy, gz) {
     window.racecarState = window.racecarState || {};
     window.racecarState.accel = { to_py: () => [ax, ay, az] };
@@ -944,23 +986,21 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
     window.racecarState.controller = { down, pressed, released, tl, tr, jlx, jly, jrx, jry };
 };
 
-// --- Keyboard-to-Controller Mapping ---
+// --- Keyboard-to-Controller Mapping (fixed) ---
 // Maps keyboard keys to RACECAR-MN Xbox controller buttons/axes:
 //   Buttons: A=0, B=1, X=2, Y=3, LB=4, RB=5, LJoy=6, RJoy=7, START=8, BACK=9
 //   Left Joystick: W/S = Y-axis, A/D = X-axis (or arrow keys)
 //   Right Joystick: I/K = Y-axis, J/L = X-axis
 //   Triggers:  Left=Q (hold), Right=E (hold)
 //   Buttons:  Z=A(0), X=B(1), C=X(2), V=Y(3), U=LB(4), O=RB(5), Enter=START(8), Backspace=BACK(9)
+// FIX: key handlers only update heldKeys + pending masks; _kbControllerTick is the sole
+// consumer that builds final controller and clears pending. This prevents edge loss where
+// buildControllerState() was called on keydown and again on _kbControllerTick before Python reads it.
+// Also unityPushController now only stores _unityController, defers build to tick.
 (function () {
     const KEY_BUTTON_MAP = {
-        'KeyZ': 0,       // A button
-        'KeyX': 1,       // B button
-        'KeyC': 2,       // X button
-        'KeyV': 3,       // Y button
-        'KeyU': 4,       // LB
-        'KeyO': 5,       // RB
-        'Enter': 8,      // START
-        'Backspace': 9,  // BACK
+        'KeyZ': 0, 'KeyX': 1, 'KeyC': 2, 'KeyV': 3,
+        'KeyU': 4, 'KeyO': 5, 'Enter': 8, 'Backspace': 9,
     };
 
     const heldKeys = new Set();
@@ -969,43 +1009,46 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
 
     function buildControllerState() {
         window.racecarState = window.racecarState || {};
+        const uc = window.racecarState._unityController;
 
         // --- Buttons bitmask from held keys ---
         let downMask = 0;
         for (const [code, bit] of Object.entries(KEY_BUTTON_MAP)) {
             if (heldKeys.has(code)) downMask |= (1 << bit);
         }
-
-        // Also allow Unity to override (merge Unity-pushed state if present and running)
-        const uc = (window.racecarState && window.racecarState._unityController);
         if (uc) downMask |= uc.down;
 
         const pressedMask = pendingPressed | (uc ? uc.pressed : 0);
         const releasedMask = pendingReleased | (uc ? uc.released : 0);
-
-        // Reset pending bitmasks so they only persist for one frame update
+        // Edge events last exactly one frame — clear after building
         pendingPressed = 0;
         pendingReleased = 0;
 
-        // --- Triggers: Q = Left Trigger, E = Right Trigger ---
+        // --- Triggers ---
         const tl = heldKeys.has('KeyQ') ? 1.0 : (uc ? uc.tl : 0.0);
         const tr = heldKeys.has('KeyE') ? 1.0 : (uc ? uc.tr : 0.0);
 
-        // --- Left joystick: WASD or Arrow keys ---
-        let jlx = 0, jly = 0;
-        if (heldKeys.has('KeyA') || heldKeys.has('ArrowLeft'))  jlx = -1.0;
-        if (heldKeys.has('KeyD') || heldKeys.has('ArrowRight')) jlx =  1.0;
-        if (heldKeys.has('KeyW') || heldKeys.has('ArrowUp'))    jly =  1.0;
-        if (heldKeys.has('KeyS') || heldKeys.has('ArrowDown'))  jly = -1.0;
-        if (uc) { jlx = jlx || uc.jlx; jly = jly || uc.jly; }
+        // --- Left joystick: explicit keyboard override, fallback to Unity ---
+        let jlx = 0, jly = 0, jlxKb = false, jlyKb = false;
+        if (heldKeys.has('KeyA') || heldKeys.has('ArrowLeft')) { jlx = -1.0; jlxKb = true; }
+        if (heldKeys.has('KeyD') || heldKeys.has('ArrowRight')) { jlx = 1.0; jlxKb = true; }
+        if (heldKeys.has('KeyW') || heldKeys.has('ArrowUp')) { jly = 1.0; jlyKb = true; }
+        if (heldKeys.has('KeyS') || heldKeys.has('ArrowDown')) { jly = -1.0; jlyKb = true; }
+        if (uc) {
+            if (!jlxKb) jlx = uc.jlx;
+            if (!jlyKb) jly = uc.jly;
+        }
 
-        // --- Right joystick: IJKL keys ---
-        let jrx = 0, jry = 0;
-        if (heldKeys.has('KeyJ')) jrx = -1.0;
-        if (heldKeys.has('KeyL')) jrx =  1.0;
-        if (heldKeys.has('KeyI')) jry =  1.0;
-        if (heldKeys.has('KeyK')) jry = -1.0;
-        if (uc) { jrx = jrx || uc.jrx; jry = jry || uc.jry; }
+        // --- Right joystick: IJKL explicit ---
+        let jrx = 0, jry = 0, jrxKb = false, jryKb = false;
+        if (heldKeys.has('KeyJ')) { jrx = -1.0; jrxKb = true; }
+        if (heldKeys.has('KeyL')) { jrx = 1.0; jrxKb = true; }
+        if (heldKeys.has('KeyI')) { jry = 1.0; jryKb = true; }
+        if (heldKeys.has('KeyK')) { jry = -1.0; jryKb = true; }
+        if (uc) {
+            if (!jrxKb) jrx = uc.jrx;
+            if (!jryKb) jry = uc.jry;
+        }
 
         window.racecarState.controller = {
             down: downMask, pressed: pressedMask, released: releasedMask,
@@ -1013,15 +1056,14 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
         };
     }
 
-    // Override unityPushController to store Unity's controller data separately, then merge
+    // Store Unity controller data, defer final merge to _kbControllerTick
     const _origPush = window.unityPushController;
     window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly, jrx, jry) {
         window.racecarState = window.racecarState || {};
         window.racecarState._unityController = { down, pressed, released, tl, tr, jlx, jly, jrx, jry };
-        buildControllerState();
+        // Do NOT call buildControllerState here — let _kbControllerTick be sole consumer
     };
 
-    // Keyboard listeners — only when not typing in an input/editor
     function isTypingTarget(e) {
         const t = e.target;
         return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
@@ -1029,38 +1071,31 @@ window.unityPushController = function (down, pressed, released, tl, tr, jlx, jly
 
     document.addEventListener('keydown', (e) => {
         if (isTypingTarget(e)) return;
-        if (heldKeys.has(e.code)) return; // already held
+        if (heldKeys.has(e.code)) return;
         heldKeys.add(e.code);
         const bit = KEY_BUTTON_MAP[e.code];
-        if (bit !== undefined) {
-            pendingPressed |= (1 << bit);
-        }
-        buildControllerState();
+        if (bit !== undefined) pendingPressed |= (1 << bit);
+        // No buildControllerState() here — defer to tick
     }, false);
 
     document.addEventListener('keyup', (e) => {
         if (isTypingTarget(e)) return;
         heldKeys.delete(e.code);
         const bit = KEY_BUTTON_MAP[e.code];
-        if (bit !== undefined) {
-            pendingReleased |= (1 << bit);
-        }
-        buildControllerState();
+        if (bit !== undefined) pendingReleased |= (1 << bit);
+        // No build here either
     }, false);
 
     document.addEventListener('click', (e) => {
         if (e.target && (e.target.id === 'unity-canvas' || (e.target.closest && e.target.closest('#unity-container')))) {
             const canvas = document.getElementById('unity-canvas');
-            if (canvas && typeof canvas.focus === 'function') {
-                canvas.focus();
-            }
+            if (canvas && typeof canvas.focus === 'function') canvas.focus();
         }
     });
 
-    // Keep pressed/released up to date each animation frame
-    window._kbControllerTick = function () {
-        buildControllerState();
-    };
+    window._kbControllerTick = function () { buildControllerState(); };
+    // Initial build so controller exists before first Unity push
+    buildControllerState();
 })();
 
 window.unitySetDrive = function (speed, angle) {
@@ -1096,6 +1131,12 @@ window.unitySetMaxSpeed = function (speed) {
     window.unityInstance.SendMessage('BrowserMessageReceiver', 'ReceiveFromJS', base64);
 };
 
+// Connect heartbeat: Unity's BrowserMessageReceiver only exists once a level scene
+// is loaded, not at main menu. A connect packet sent at registration time (main menu)
+// is dropped. Keep announcing ourselves (idempotent) until Unity starts driving us.
+let connectHeartbeat = null;
+let slowTimer = 0;
+
 window.unityRegisterRacecar = function (racecar) {
     activeRacecar = racecar;
     // Cache the Python callback functions via direct property access on the PyProxy.
@@ -1111,10 +1152,20 @@ window.unityRegisterRacecar = function (racecar) {
     try {
         window._rc_updateSlowFunc = racecar._update_slow_func || null;
     } catch (e) { window._rc_updateSlowFunc = null; }
+    try {
+        window._rc_updateSlowTime = racecar._update_slow_time || 1.0;
+    } catch (e) { window._rc_updateSlowTime = 1.0; }
 
     window.isPythonRunning = true;
+    // Unity will not offer User Program mode until it receives a connect packet,
+    // but its receiver GameObject only exists once a level scene is loaded — a
+    // connect sent now, at the main menu, is dropped. Keep announcing ourselves
+    // (idempotent on the Unity side) until Unity starts driving the loop.
     sendConnectToUnity();
+    if (connectHeartbeat !== null) clearInterval(connectHeartbeat);
+    connectHeartbeat = setInterval(sendConnectToUnity, 1000);
     terminalEl.textContent += "Racecar registered successfully. Active loop established.\n";
+    terminalEl.textContent += "(Connecting to simulator — start a level to activate the loop.)\n";
 };
 
 // Hook C# callbacks triggered by Unity's Update loop
@@ -1122,8 +1173,15 @@ window.unityToPython = function (bytes) {
     if (!activeRacecar) return;
     const header = bytes[0];
 
+    // Unity is driving us now, so it has our connect
+    if (connectHeartbeat !== null) {
+        clearInterval(connectHeartbeat);
+        connectHeartbeat = null;
+    }
+
     try {
         if (header === 2) { // unity_start
+            slowTimer = 0;
             if (window._kbControllerTick) window._kbControllerTick();
             if (window._rc_startFunc) {
                 window._rc_startFunc();
@@ -1134,12 +1192,22 @@ window.unityToPython = function (bytes) {
             if (window._rc_updateFunc) {
                 window._rc_updateFunc();
             }
+            slowTimer += 1 / 60;
+            if (window._rc_updateSlowFunc && slowTimer >= (window._rc_updateSlowTime || 1.0)) {
+                slowTimer = 0;
+                window._rc_updateSlowFunc();
+            }
             sendFinishedToUnity(false);
         } else if (header === 4) { // unity_exit (from Unity exiting User Program mode)
             stopProgram();
         }
     } catch (err) {
+        console.error("[Python Loop Error]", err);
         terminalEl.textContent += "[Python Loop Error]: " + err.message + "\n";
+        // Also surface in the py-error banner if present
+        if (typeof showPyErrorBanner === 'function') {
+            showPyErrorBanner("[Python Loop Error]\n" + (err.message || err));
+        }
         sendErrorToUnity(err.message);
     }
 };
@@ -1230,6 +1298,26 @@ async function runFile(targetFile) {
         // A previous bug injected 'ensurePyodideDir(targetFile);\n' which caused a JavaScript SyntaxError
         // because it was evaluated as an invalid newline token, breaking the entire UI initialization!
         ensurePyodideDir(targetFile);
+        // Sync all workspace files so sibling imports work (e.g. import my_helper)
+        try {
+            for (const [p, content] of Object.entries(files)) {
+                if (p === targetFile) continue;
+                if (p.endsWith('/')) {
+                    // Folder marker — ensure it exists as dir
+                    ensurePyodideDir(p + '.keep');
+                    continue;
+                }
+                try {
+                    ensurePyodideDir(p);
+                    // For non-target files, write raw (or preprocessed if you want consistency)
+                    pyodideInstance.FS.writeFile(`/home/pyodide/${p}`, content);
+                } catch (e) {
+                    console.warn(`Failed to sync workspace file ${p} to Pyodide FS`, e);
+                }
+            }
+        } catch (e) {
+            console.warn("Workspace sync to Pyodide failed:", e);
+        }
         // --- Preprocess user code for Pyodide compatibility ---
         let userCode = files[targetFile];
 

@@ -1,6 +1,6 @@
-import js
-import numpy as np
-from pyodide.ffi import create_proxy
+import js  # type: ignore
+import numpy as np  # type: ignore
+from pyodide.ffi import create_proxy  # type: ignore
 
 class Drive:
     def set_speed_angle(self, speed, angle):
@@ -23,10 +23,11 @@ class Camera:
         if not hasattr(js.window, "racecarState") or not hasattr(js.window.racecarState, "camera"):
             return np.zeros((480, 640, 3), dtype=np.uint8)
         cam = js.window.racecarState.camera
-        arr = np.asarray(cam.pixels.to_py(), dtype=np.uint8)
-        # Unity's Color32 array is RGBA. OpenCV uses BGR.
+        arr = np.asarray(cam.to_py(), dtype=np.uint8)
+        # Unity's JSPushCamera sends a Uint8Array slice of raw RGBA bytes.
+        # racecarState.camera = { to_py: ()=>Uint8Array, w, h } — no .pixels nesting.
         arr = arr.reshape((cam.h, cam.w, 4))
-        # Convert RGBA to BGR
+        # Convert RGBA to BGR for OpenCV
         bgr = np.empty((cam.h, cam.w, 3), dtype=np.uint8)
         bgr[..., 0] = arr[..., 2] # B
         bgr[..., 1] = arr[..., 1] # G
@@ -40,10 +41,18 @@ class Camera:
 class Physics:
     def get_linear_acceleration(self):
         if not hasattr(js.window, "racecarState"): return (0.0, 0.0, 0.0)
-        return tuple(js.window.racecarState.accel.to_py())
+        if not hasattr(js.window.racecarState, "accel"): return (0.0, 0.0, 0.0)
+        try:
+            return tuple(js.window.racecarState.accel.to_py())
+        except Exception:
+            return (0.0, 0.0, 0.0)
     def get_angular_velocity(self):
         if not hasattr(js.window, "racecarState"): return (0.0, 0.0, 0.0)
-        return tuple(js.window.racecarState.gyro.to_py())
+        if not hasattr(js.window.racecarState, "gyro"): return (0.0, 0.0, 0.0)
+        try:
+            return tuple(js.window.racecarState.gyro.to_py())
+        except Exception:
+            return (0.0, 0.0, 0.0)
 
 class Controller:
     # Inner classes mirror the real RACECAR-MN controller enums exactly
@@ -74,7 +83,7 @@ class Controller:
 
     def is_down(self, button):
         c = self._ctrl()
-        return bool(c and (c.down & (1 << int(button)))) 
+        return bool(c and (c.down & (1 << int(button))))
     def was_pressed(self, button):
         c = self._ctrl()
         return bool(c and (c.pressed & (1 << int(button))))
@@ -105,6 +114,7 @@ class Racecar:
         self.physics = Physics()
         self.controller = Controller()
         self.display = Display()
+        self._update_slow_time = 1.0
 
     def set_start_update(self, start_func, update_func, update_slow_func=None):
         self._start_func = start_func
@@ -116,7 +126,8 @@ class Racecar:
         js.window.unityRegisterRacecar(self._proxy)
 
     def set_update_slow_time(self, time):
-        pass
+        self._update_slow_time = float(time)
+        js.window._rc_updateSlowTime = self._update_slow_time
 
     def get_delta_time(self):
         return 1.0 / 60.0

@@ -7,8 +7,17 @@
     <title>MIT Racecar Neo - OS Desktop</title>
     <link rel="stylesheet" href="index.css">
 
-    <!-- Cross-Origin Isolation for Unity WebGL SharedArrayBuffer support on GitHub Pages -->
-    <script src="coi-serviceworker.js"></script>
+    <!-- NOTE: coi-serviceworker.js is deliberately NOT auto-loaded here.
+         The previous inclusion forced a reload and proxied every Build/* fetch
+         through a service worker, which can feed Unity a stale frontend.data/.wasm
+         pair (producing "Maximum call stack size exceeded"). This WebGL build
+         uses no threads and never touches SharedArrayBuffer (verified: 0
+         pthread/SAB refs in frontend.framework.js; only SAB mention in loader
+         is capability telemetry), so COOP/COEP isolation buys nothing locally.
+         The file coi-serviceworker.js is kept on disk for GitHub Pages deploys
+         that still need it, but the page works without it when served via
+         server.py. Stale SWs are cleaned up by unregisterStaleServiceWorkers()
+         below. -->
 
     <!-- Load JSZip for Folder Packaging -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -291,6 +300,9 @@
     <input type="file" id="run-file-input" accept=".py" class="hidden">
     <input type="file" id="import-data-input" accept=".json" class="hidden">
 
+    <!-- Python error banner (from simplified) — surfaces missing Unity->browser link) -->
+    <div id="py-error-banner" style="display:none; position:fixed; bottom:60px; left:50%; transform:translateX(-50%); max-width:80%; max-height:35%; overflow:auto; z-index:10000; margin:0; padding:12px 16px; background:rgba(180,0,0,0.92); color:#fff; font-size:12px; font-family:monospace; white-space:pre-wrap; border-radius:8px; border:1px solid rgba(255,80,80,0.6); cursor:pointer;" title="Click to dismiss" onclick="this.style.display='none'"></div>
+
     <script>
         // Unity Config
         window.unityInstance = null;
@@ -303,6 +315,14 @@
             companyName: "MIT Beaver Works",
             productName: "RacecarSim",
             productVersion: "2.8.3",
+            // CRITICAL: Unity otherwise stashes frontend.data (74 MB) and frontend.wasm
+            // in IndexedDB "UnityCache" keyed by companyName/productName/productVersion.
+            // Those never change between rebuilds, so a rebuilt player silently reuses
+            // previous build's cached data alongside new .wasm, dying as
+            // "RangeError: Maximum call stack size exceeded". Always fetch from network;
+            // browser HTTP cache (ETag/Last-Modified) still avoids re-downloading unchanged files.
+            // (Fix from simplified_racecar - this was missing in main frontend)
+            cacheControl: function () { return "no-store"; },
             // showBanner MUST NOT be a no-op — Unity's loader uses it to report
             // critical errors (framework parse failures, compression misconfigs).
             // A no-op silently swallows all errors, leaving the user at 0%.
@@ -317,6 +337,64 @@
             }
         };
 
+        // GameObject that Unity's PythonInterface listens on. Must match the receiver
+        // MonoBehaviour (BrowserMessageReceiver.cs). Missing receiver = car never moves.
+        const UNITY_RECEIVER = 'BrowserMessageReceiver';
+
+        function showPyErrorBanner(message) {
+            const el = document.getElementById('py-error-banner');
+            if (!el) return;
+            el.style.display = 'block';
+            el.textContent = message;
+        }
+
+        // Detect missing browser->Unity bridge: Unity's missing-GameObject warning
+        // format is "SendMessage: object BrowserMessageReceiver not found!" routed
+        // to console.log (not console.error). Without a catch, broken bridge is silent.
+        (function () {
+            const origLog = console.log;
+            console.log = function (msg) {
+                if (typeof msg === 'string' && msg.indexOf('SendMessage: object ' + UNITY_RECEIVER) === 0) {
+                    showPyErrorBanner(
+                        "Unity WebGL build has no browser->Unity receiver.\n\n" + msg.trim() + "\n\n" +
+                        "Drive and connect packets from Python are being discarded, so the car cannot move.\n" +
+                        "Fix: rebuild the WebGL player with BrowserMessageReceiver.cs present. " +
+                        "The receiver was missing in the old Build (Jul 10); rebuilt Build should fix this."
+                    );
+                }
+                return origLog.apply(console, arguments);
+            };
+        })();
+
+        // --- Stale cache cleanup (from simplified_racecar) ---
+        // A previously-registered coi-serviceworker still controls this page and keeps serving
+        // Build/* from its own cache, so unregistering is not enough on its own — the page has to
+        // reload once to escape the controller. Guarded by sessionStorage so it can only happen once.
+        // Also drop any UnityCache left over from before cacheControl:"no-store" was set.
+        const SW_RELOAD_FLAG = "sw-cleanup-reloaded";
+        async function unregisterStaleServiceWorkers() {
+            if (!navigator.serviceWorker) return false;
+            let regs = [];
+            try { regs = await navigator.serviceWorker.getRegistrations(); } catch (e) { return false; }
+            if (!regs.length) return false;
+            await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+            if (navigator.serviceWorker.controller && !sessionStorage.getItem(SW_RELOAD_FLAG)) {
+                sessionStorage.setItem(SW_RELOAD_FLAG, "1");
+                location.reload();
+                return true; // page is going away
+            }
+            return false;
+        }
+        async function deleteStaleUnityCache() {
+            if (!window.indexedDB) return;
+            await new Promise((resolve) => {
+                let req;
+                try { req = indexedDB.deleteDatabase("UnityCache"); } catch (e) { return resolve(); }
+                req.onsuccess = req.onerror = req.onblocked = () => resolve();
+                setTimeout(resolve, 3000); // never let a blocked delete stall the loader
+            });
+        }
+
         window.loadUnity = () => {
             const unityStatus = document.querySelector("#unity-status");
             const loadingBar = document.querySelector("#unity-loading-bar");
@@ -325,7 +403,7 @@
             const loadingPercent = document.querySelector("#unity-loading-percent");
             const canvas = document.querySelector("#unity-canvas");
 
-            // Unity WebGL requires SharedArrayBuffer, which needs COOP/COEP headers.
+            // Unity WebGL fetching Build/* over file:// is blocked by browser same-origin
             if (window.location.protocol === "file:") {
                 if (loadingBar) loadingBar.style.display = "none";
                 unityStatus.textContent = "Needs Server";
@@ -333,7 +411,7 @@
                 unityStatus.classList.add('error');
                 const msg = document.createElement("div");
                 msg.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);color:#fff;font-family:inherit;padding:1rem;text-align:center;border-radius:8px;z-index:10;";
-                msg.innerHTML = "<span style='font-size:2rem'>⚠️</span><br><strong>Simulator unavailable over file://</strong><br><br>Unity WebGL requires <code>SharedArrayBuffer</code>, which browsers only allow when the page is served with COOP/COEP headers from a web server.<br><br>Run <code>python -m http.server 8000</code> in this folder and open <a href='http://localhost:8000' style='color:#7eb8f7'>localhost:8000</a> instead.";
+                msg.innerHTML = "<span style='font-size:2rem'>⚠️</span><br><strong>Simulator unavailable over file://</strong><br><br>The Unity loader fetches <code>Build/frontend.data</code> and <code>frontend.wasm</code> over HTTP, and browsers block those requests from <code>file://</code> origins.<br><br>Run <code>python server.py</code> in this folder and open <a href='http://localhost:8000' style='color:#7eb8f7'>localhost:8000</a> instead.<br><br><small>Or: <code>python -m http.server 8000</code> also works if server.py is absent.</small>";
                 canvas.parentElement.style.position = "relative";
                 canvas.parentElement.appendChild(msg);
                 return;
@@ -384,11 +462,18 @@
                             if (savedDefineAmd) window.define.amd = savedDefineAmd;
                         }
                         console.error("Failed to load Unity Instance:", err);
-                        if (loadingText) loadingText.textContent = "Failed to launch WebGL simulator: " + (err.message || err);
+                        const raw = String(err && err.message || err);
+                        const hint = /Maximum call stack size exceeded/i.test(raw)
+                            ? "\n\nThis usually means mismatched Unity build artifacts (a cached " +
+                              "frontend.data paired with a different frontend.wasm). " +
+                              "Open DevTools -> Application -> Storage -> 'Clear site data', then reload."
+                            : "";
+                        if (loadingText) loadingText.textContent = "Failed to launch WebGL simulator: " + raw + hint;
                         if (loadingPercent) loadingPercent.textContent = "Error";
                         unityStatus.textContent = "Failed Load";
                         unityStatus.classList.remove('loading');
                         unityStatus.classList.add('error');
+                        showPyErrorBanner("Failed to launch simulator: " + raw + hint);
                     });
                 } catch (syncErr) {
                     if (savedDefine) {
@@ -396,11 +481,16 @@
                         if (savedDefineAmd) window.define.amd = savedDefineAmd;
                     }
                     console.error("Failed to create Unity Instance:", syncErr);
-                    if (loadingText) loadingText.textContent = "Failed to initialize simulator: " + (syncErr.message || syncErr);
+                    const raw = String(syncErr.message || syncErr);
+                    const hint = /Maximum call stack size exceeded/i.test(raw)
+                        ? "\n\nLikely mismatched cached artifacts — clear site data and reload."
+                        : "";
+                    if (loadingText) loadingText.textContent = "Failed to initialize simulator: " + raw + hint;
                     if (loadingPercent) loadingPercent.textContent = "Error";
                     unityStatus.textContent = "Init Error";
                     unityStatus.classList.remove('loading');
                     unityStatus.classList.add('error');
+                    showPyErrorBanner("Init error: " + raw + hint);
                 }
             };
 
@@ -426,10 +516,24 @@
                 unityStatus.textContent = "Script Error";
                 unityStatus.classList.remove('loading');
                 unityStatus.classList.add('error');
+                showPyErrorBanner("Failed to download Unity loader script (Build/frontend.loader.js not found). Check that Build/ folder exists and is served correctly.");
             };
-            script.onload = startUnity;
+            script.onload = async () => {
+                // Drop stale UnityCache from before cacheControl:no-store
+                try { await deleteStaleUnityCache(); } catch (e) { console.warn("UnityCache cleanup failed:", e); }
+                startUnity();
+            };
             document.body.appendChild(script);
         };
+
+        // On first load, also try to unregister stale service workers that could serve stale Build/*
+        window.addEventListener('load', async () => {
+            try {
+                if (await unregisterStaleServiceWorkers()) return; // page reloading
+            } catch (e) {
+                console.warn("SW cleanup failed:", e);
+            }
+        });
     </script>
     <!-- Snap Layout Popup -->
     <div id="snap-layout-popup" class="snap-popup hidden glass-panel">
