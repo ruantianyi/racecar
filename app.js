@@ -141,6 +141,20 @@ document.addEventListener('click', () => {
 const neutralizeUnityPreventDefault = (e) => {
     const target = e.target;
     if (!target) return;
+
+    // Monaco editor uses an internal <textarea> for input.  Unity's keyboard
+    // hijack normally calls preventDefault() on key events, which would block
+    // typing into any <input>/<textarea>.  We neutralize preventDefault for
+    // real user-facing input elements so Unity can't swallow their keystrokes.
+    //
+    // BUT: Monaco itself also calls preventDefault() to suppress the browser's
+    // native textarea behaviour after it has already handled the keystroke
+    // internally.  If we replace preventDefault with a no-op on Monaco's
+    // textarea, the browser's native handler ALSO fires, so one Backspace press
+    // deletes two characters (Monaco deletes one, the browser deletes another).
+    // Therefore we skip neutralization for any element inside the #editor div.
+    if (target.closest && target.closest('#editor')) return;
+
     const isInput = target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
         target.tagName === 'SELECT' ||
