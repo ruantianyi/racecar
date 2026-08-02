@@ -5,7 +5,12 @@
 
 # --- Unity WebGL 编译产物 (Build Output) ---
 # 注意：Unity 编译出的 WebGL 部署文件（体积较重，无需纳入源码版本控制）
-ide/frontend/Build/
+# EXCEPTION: frontend.data and frontend.wasm ARE tracked — they are required
+# for GitHub Pages deployment and were previously handled by Git LFS.
+# The LFS bandwidth quota was exhausted in CI, so they're now regular git files.
+ide/frontend/Build/*
+!ide/frontend/Build/frontend.data
+!ide/frontend/Build/frontend.wasm
 Build/
 Builds/
 

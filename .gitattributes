@@ -1,3 +1,5 @@
-# Unity WebGL binary build artifacts - use Git LFS to handle large files
-ide/frontend/Build/frontend.data filter=lfs diff=lfs merge=lfs -text
-ide/frontend/Build/frontend.wasm filter=lfs diff=lfs merge=lfs -text
+# Git LFS tracking removed for frontend.data and frontend.wasm.
+# Both files are under GitHub's 100 MB limit (~74 MB .data, ~27 MB .wasm)
+# and GitHub's free LFS bandwidth quota (1 GB/month) was exhausted by CI,
+# causing the gh-pages deploy to serve LFS pointer files instead of real binaries.
+# Now stored as regular git files.
