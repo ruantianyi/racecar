@@ -1,0 +1,10 @@
+{
+  "name": "Academic Physics Simulator & Code Workspace",
+  "short_name": "PhysicsWorkspace",
+  "description": "Educational platform for evaluating robotic kinematics and 3D physics models.",
+  "start_url": "index.html",
+  "display": "standalone",
+  "categories": ["education", "science", "utilities"],
+  "theme_color": "#0b0f19",
+  "background_color": "#0b0f19"
+}
