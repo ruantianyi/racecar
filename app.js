@@ -5,7 +5,6 @@ let isPythonReady = false;
 let currentFile = 'demo.py';
 let activeRacecar = null;
 
-// Workspace File Store
 let defaultFiles = {
     'demo.py': `import racecar_core
 import racecar_utils as rc_utils
@@ -20,18 +19,18 @@ def start():
     global speed, angle
     speed = 0.5
     angle = 0.0
-    print("Racecar program started! Driving forward.")
+    print("Kinematics testing environment initialized. Speed target set to 0.5.")
 
 def update():
     global speed, angle
-    # Drive the car using speed and angle
+    # Apply motion commands to the physical model
     rc.drive.set_speed_angle(speed, angle)
     
-    # Read Lidar samples (360 values)
+    # Analyze LiDAR sensor array data (360 sample points)
     samples = rc.lidar.get_samples()
-    if samples[0] < 1.0: # obstacle ahead
+    if samples[0] < 1.0: # obstacle detected in trajectory path
         rc.drive.stop()
-        print("Obstacle detected! Stopping.")
+        print("Proximity boundary reached. Halting dynamic model.")
 
 rc.set_start_update(start, update)
 rc.go()

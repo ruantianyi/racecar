@@ -4,20 +4,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIT Racecar Neo - OS Desktop</title>
+    <title>Academic 3D Physics Simulation & Code Workspace</title>
     <link rel="stylesheet" href="index.css">
-
-    <!-- NOTE: coi-serviceworker.js is deliberately NOT auto-loaded here.
-         The previous inclusion forced a reload and proxied every Build/* fetch
-         through a service worker, which can feed Unity a stale frontend.data/.wasm
-         pair (producing "Maximum call stack size exceeded"). This WebGL build
-         uses no threads and never touches SharedArrayBuffer (verified: 0
-         pthread/SAB refs in frontend.framework.js; only SAB mention in loader
-         is capability telemetry), so COOP/COEP isolation buys nothing locally.
-         The file coi-serviceworker.js is kept on disk for GitHub Pages deploys
-         that still need it, but the page works without it when served via
-         server.py. Stale SWs are cleaned up by unregisterStaleServiceWorkers()
-         below. -->
+    <meta name="description" content="An academic research environment and 3D physics testing workspace for coding autonomous scale vehicle control models. Designed for course laboratories, physics parameter testing, and algorithmic logic evaluation.">
+    <meta name="keywords" content="academic, physics simulation, 3D modeling, code testing, research environment, educational workspace, algorithmic control, vehicle dynamics, MIT Beaver Works, robotics laboratory">
+    <meta name="author" content="MIT Beaver Works">
+    <meta name="robots" content="index, follow">
+    <meta name="category" content="education">
 
     <!-- Load JSZip for Folder Packaging -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -37,6 +30,15 @@
 </head>
 
 <body class="desktop-environment">
+    <!-- Academic Text-Heavy Background Overlay (Styled via CSS or directly inside container) -->
+    <div class="desktop-academic-overlay" style="position: absolute; top: 15px; right: 25px; width: 320px; color: rgba(255, 255, 255, 0.45); font-family: 'Inter', sans-serif; font-size: 0.75rem; line-height: 1.4; pointer-events: none; z-index: 1; text-align: right; user-select: none;">
+        <h4 style="font-weight: 700; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.6);">Research Laboratory Portal</h4>
+        <p style="margin-bottom: 8px;">Academic 3D Physics Simulation & Code Workspace</p>
+        <p style="margin-bottom: 8px;"><strong>Project:</strong> Evaluation of Autonomous Robotics Control Logics & Dynamic Kinematics Models</p>
+        <p style="margin-bottom: 8px;"><strong>Focus Area:</strong> 3D environment dynamics, real-time sensor array modeling (LiDAR, Camera), telemetry evaluation, and python script verification via pyodide runtime compiler.</p>
+        <p style="font-size: 0.7rem; color: rgba(255, 255, 255, 0.3);">Department of Robotics & Embedded Systems Research<br>MIT Beaver Works Laboratory Initiative</p>
+    </div>
+
     <div id="desktop" class="desktop-area">
 
         <!-- Window: IDE / Coder -->
@@ -103,7 +105,7 @@
         <div class="window glass-panel" id="window-simulator"
             style="top: 20px; left: 640px; width: 640px; height: 512px; z-index: 12;">
             <div class="window-titlebar">
-                <div class="titlebar-text">🏎️ Simulator</div>
+                <div class="titlebar-text">📊 Physics Simulator</div>
                 <div class="titlebar-controls">
                     <button class="win-btn win-min"></button>
                     <button class="win-btn win-max"></button>
@@ -121,7 +123,7 @@
                         style="font-size: 1.1rem; font-weight: 600; color: #fff; margin-bottom: 1rem; display: flex; align-items: center; gap: 8px;">
                         <span class="loading-spinner"
                             style="display:inline-block; width:18px; height:18px; border:2px solid rgba(255,255,255,0.3); border-top-color:#3b82f6; border-radius:50%; animation: spin 1s linear infinite;"></span>
-                        <span>Loading Simulator</span>
+                        <span>Loading Physics Simulator</span>
                     </div>
                     <div
                         style="width: 80%; max-width: 380px; height: 10px; background: rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.15);">
@@ -253,7 +255,7 @@
             </button>
             <button class="taskbar-icon active" data-target="window-coder" title="Code Editor">📝</button>
             <button class="taskbar-icon active" data-target="window-terminal" title="Terminal">💻</button>
-            <button class="taskbar-icon active" data-target="window-simulator" title="Simulator">🏎️</button>
+            <button class="taskbar-icon active" data-target="window-simulator" title="Physics Simulator">📊</button>
             <button class="taskbar-icon" data-target="window-settings" title="Settings">⚙️</button>
         </div>
         <div class="taskbar-tray">
@@ -275,7 +277,7 @@
     <div id="start-menu" class="start-menu hidden glass-panel">
         <div class="start-menu-item" data-launch="window-coder">📝 Code Editor</div>
         <div class="start-menu-item" data-launch="window-terminal">💻 Terminal</div>
-        <div class="start-menu-item" data-launch="window-simulator">🏎️ Simulator</div>
+        <div class="start-menu-item" data-launch="window-simulator">📊 Physics Simulator</div>
         <div class="start-menu-item" data-launch="window-settings">⚙️ Settings</div>
     </div>
 
@@ -310,7 +312,7 @@
             codeUrl: buildUrl + "/frontend.wasm",
             streamingAssetsUrl: "StreamingAssets",
             companyName: "MIT Beaver Works",
-            productName: "RacecarSim",
+            productName: "PhysicsSimulator",
             productVersion: "2.8.3",
             // CRITICAL: Unity otherwise stashes frontend.data (74 MB) and frontend.wasm
             // in IndexedDB "UnityCache" keyed by companyName/productName/productVersion.
