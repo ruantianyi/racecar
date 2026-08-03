@@ -300,9 +300,6 @@
     <input type="file" id="run-file-input" accept=".py" class="hidden">
     <input type="file" id="import-data-input" accept=".json" class="hidden">
 
-    <!-- Python error banner (from simplified) — surfaces missing Unity->browser link) -->
-    <div id="py-error-banner" style="display:none; position:fixed; bottom:60px; left:50%; transform:translateX(-50%); max-width:80%; max-height:35%; overflow:auto; z-index:10000; margin:0; padding:12px 16px; background:rgba(180,0,0,0.92); color:#fff; font-size:12px; font-family:monospace; white-space:pre-wrap; border-radius:8px; border:1px solid rgba(255,80,80,0.6); cursor:pointer;" title="Click to dismiss" onclick="this.style.display='none'"></div>
-
     <script>
         // Unity Config
         window.unityInstance = null;
@@ -341,11 +338,18 @@
         // MonoBehaviour (BrowserMessageReceiver.cs). Missing receiver = car never moves.
         const UNITY_RECEIVER = 'BrowserMessageReceiver';
 
+        // All error messages now route through the terminal pane so they stay
+        // visible and are easy to read — no more transient pop-up banners.
         function showPyErrorBanner(message) {
-            const el = document.getElementById('py-error-banner');
-            if (!el) return;
-            el.style.display = 'block';
-            el.textContent = message;
+            if (typeof window.terminalMsg === 'function') {
+                window.terminalMsg(message, 'error');
+                return;
+            }
+            var term = document.getElementById('terminal');
+            if (term) {
+                term.textContent += '[ERROR] ' + message + '\n';
+                term.scrollTop = term.scrollHeight;
+            }
         }
 
         // Detect missing browser->Unity bridge: Unity's missing-GameObject warning
