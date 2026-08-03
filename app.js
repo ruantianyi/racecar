@@ -61,6 +61,23 @@ function updateTabsUI() {
 
 // DOM Elements
 const terminalEl = document.getElementById('terminal');
+
+// --- Terminal Output Helper ---
+// Routes ALL informational / warning / error messages to the terminal pane
+// so nothing is hidden behind popups or transient banners.
+function terminalMsg(message, level) {
+    if (!terminalEl) return;
+    level = level || 'info';
+    var prefix = '';
+    if (level === 'error') prefix = '[ERROR] ';
+    else if (level === 'warn') prefix = '[WARNING] ';
+    else if (level === 'success') prefix = '[OK] ';
+    terminalEl.textContent += prefix + message + '\n';
+    terminalEl.scrollTop = terminalEl.scrollHeight;
+}
+// Expose for index.html inline-script use
+window.terminalMsg = terminalMsg;
+
 const runBtn = document.getElementById('run-btn');
 const chooseRunBtn = document.getElementById('choose-run-btn');
 const stopBtn = document.getElementById('stop-run-btn');
@@ -318,13 +335,13 @@ async function createItemPrompt(parentFolder = '') {
                 const ext = name.split('.').pop().toLowerCase();
                 const allowedExts = ['py', 'js', 'txt', 'html', 'css', 'json', 'md', 'csv', 'xml', 'yml', 'yaml', 'sh', 'cpp', 'c', 'h', 'hpp', 'java'];
                 if (!allowedExts.includes(ext)) {
-                    await CustomDialog.alert("A file can be any programming language or txt file.");
+                    terminalMsg("Invalid file extension. Allowed: .py, .js, .txt, .html, .css, .json, .md, .csv, .xml, .yml, .yaml, .sh, .cpp, .c, .h, .hpp, .java", "error");
                     return;
                 }
             }
             const fullPath = targetParent + name;
             if (files[fullPath]) {
-                await CustomDialog.alert('File already exists!');
+                terminalMsg('File already exists.', "error");
                 return;
             }
             saveCurrentFile();
@@ -343,7 +360,7 @@ async function createItemPrompt(parentFolder = '') {
             if (!name.endsWith('/')) name += '/';
             const fullPath = targetParent + name;
             if (files[fullPath]) {
-                await CustomDialog.alert('Folder already exists!');
+                terminalMsg('Folder already exists.', "error");
                 return;
             }
             files[fullPath] = '';
@@ -371,7 +388,7 @@ async function renameFileOrFolder(oldPath) {
     if (isFolder) {
         const newFolderPath = parentPath + (cleanName.endsWith('/') ? cleanName : cleanName + '/');
         if (files[newFolderPath] && newFolderPath !== oldPath) {
-            await CustomDialog.alert(`A folder named '${cleanName}' already exists!`);
+            terminalMsg(`A folder named '${cleanName}' already exists.`, "error");
             return;
         }
         const keysToRename = Object.keys(files).filter(k => k === oldPath || k.startsWith(oldPath));
@@ -396,13 +413,13 @@ async function renameFileOrFolder(oldPath) {
             const ext = finalFileName.split('.').pop().toLowerCase();
             const allowedExts = ['py', 'js', 'txt', 'html', 'css', 'json', 'md', 'csv', 'xml', 'yml', 'yaml', 'sh', 'cpp', 'c', 'h', 'hpp', 'java'];
             if (!allowedExts.includes(ext)) {
-                await CustomDialog.alert("A file can be any programming language or txt file.");
+                terminalMsg("Invalid file extension. Allowed: .py, .js, .txt, .html, .css, .json, .md, .csv, .xml, .yml, .yaml, .sh, .cpp, .c, .h, .hpp, .java", "error");
                 return;
             }
         }
         const targetFile = parentPath + finalFileName;
         if (files[targetFile] && targetFile !== oldPath) {
-            await CustomDialog.alert(`A file named '${finalFileName}' already exists!`);
+            terminalMsg(`A file named '${finalFileName}' already exists.`, "error");
             return;
         }
         files[targetFile] = files[oldPath];
@@ -555,7 +572,7 @@ function saveCurrentFile(force = false) {
                 updateTabsUI();
             } catch (e) {
                 console.error("LocalStorage save error:", e);
-                CustomDialog.alert("Storage Limit Reached: Could not auto-save files to local browser storage. Please export your project.");
+                terminalMsg("Storage Limit Reached: Could not auto-save files to local browser storage. Please export your project.", "error");
             }
         }
     }
@@ -1217,11 +1234,7 @@ window.unityToPython = function (bytes) {
         }
     } catch (err) {
         console.error("[Python Loop Error]", err);
-        terminalEl.textContent += "[Python Loop Error]: " + err.message + "\n";
-        // Also surface in the py-error banner if present
-        if (typeof showPyErrorBanner === 'function') {
-            showPyErrorBanner("[Python Loop Error]\n" + (err.message || err));
-        }
+        terminalMsg("Python Loop Error: " + (err.message || err), "error");
         sendErrorToUnity(err.message);
     }
 };
@@ -1483,7 +1496,7 @@ if (fullscreenBtn) {
                 } else if (docEl.msRequestFullscreen) {
                     docEl.msRequestFullscreen();
                 } else {
-                    await CustomDialog.alert("Your browser does not support the Fullscreen API.");
+                    terminalMsg("Your browser does not support the Fullscreen API.", "error");
                     return;
                 }
 
@@ -1496,14 +1509,14 @@ if (fullscreenBtn) {
                         const winH = window.innerHeight;
                         // If viewport is significantly smaller than the physical screen, we are trapped in an iframe
                         if (Math.abs(winW - screenW) > 100 || Math.abs(winH - screenH) > 100) {
-                            await CustomDialog.alert("Fullscreen is enabled, but the viewport didn't expand to fill your monitor!\n\nThis happens when viewing the OS inside an IDE preview window or a constrained iframe.\n\nFor a true fullscreen experience, please open index.html directly in a normal web browser tab.");
+                            terminalMsg("Fullscreen is enabled, but the viewport didn't expand to fill your monitor. This happens when viewing the OS inside an IDE preview window or a constrained iframe. For a true fullscreen experience, open index.html directly in a normal browser tab.", "warn");
                         }
                     }
                 }, 600);
 
             } catch (err) {
                 console.error("Fullscreen error:", err);
-                await CustomDialog.alert("Fullscreen could not be activated: " + err.message);
+                terminalMsg("Fullscreen could not be activated: " + err.message, "error");
             }
         } else {
             try {
@@ -1523,7 +1536,7 @@ if (fullscreenBtn) {
     });
 
     document.addEventListener('fullscreenerror', async () => {
-        await CustomDialog.alert("Fullscreen could not be activated.\nIf you are viewing this in an IDE preview window, it is blocking fullscreen access. Please right-click the file and open it in a normal web browser.");
+        terminalMsg("Fullscreen could not be activated. If you are viewing this in an IDE preview window, it is blocking fullscreen access. Right-click the file and open it in a normal web browser.", "error");
     });
 }
 
@@ -1613,10 +1626,10 @@ if (trayImportBtn && trayImportInput) {
                 }
 
                 hasUnexportedData = false;
-                await CustomDialog.alert("Complete user data & workspace imported successfully! Reloading page...");
+                terminalMsg("Complete user data & workspace imported successfully. Reloading page...", "success");
                 location.reload();
             } catch (err) {
-                await CustomDialog.alert("Failed to import backup package: " + err.message);
+                terminalMsg("Failed to import backup package: " + err.message, "error");
             }
         };
         reader.readAsText(file);
